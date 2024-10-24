@@ -118,6 +118,8 @@ class EventsManager(struct.PyTreeNode):
             return self.record_wall_hit(entity, position)
         elif isinstance(entity, Lava):
             return self.record_lava_fall(entity, position)
+        elif isinstance(entity, Ball):
+            return self.record_ball_hit(entity, position)
         return self
 
     def record_pickup(self, entity: Entity, position: Array) -> EventsManager:
@@ -157,15 +159,18 @@ class EventsManager(struct.PyTreeNode):
             )
         )
 
-    def record_ball_hit(self, ball: Ball) -> EventsManager:
+    def record_ball_hit(self, ball: Ball, position) -> EventsManager:
         """Flags an event when the player is hit by a ball as happened and returns the
         updated events manager.
         
         Args:
             ball (Ball): The ball that hit the player.
+            position (Array): The position of the ball in the grid.
         
         Returns:
             EventsManager: The updated events manager."""
+        idx = jnp.where(ball.position == position, size=1)[0][0]
+        ball = ball[idx]
         return self.replace(
             ball_hit=Event(
                 position=ball.position,

@@ -65,57 +65,60 @@ def stochastic_transition(
     state = update_balls(state)
     return state
 
-
 def update_balls(state: State) -> State:
     """Update the position of the balls in the game.
-    Balls move in a random direction if they can, otherwise they stay in place.
+    Each ball tries to move in up to 3 random directions before staying in place.
     
     Args:
         state (State): The current state of the game.
-    
     Returns:
         State: The new state of the game."""
-    def update_one(ball: Ball, key: Array) -> Tuple[Array, EventsManager]:
-        direction = jax.random.randint(key, (), minval=0, maxval=4)
-        new_position = translate(ball.position, direction)
-        new_ball = ball.replace(position=new_position)
-        can_move, events = _can_spawn_there(state, new_ball)
-        return jnp.where(can_move, new_ball.position, ball.position), events
+    
+    def try_movements(ball: Ball, key: Array) -> Array:
+        def try_one_direction(carry, key):
+            current_pos, found_valid = carry
+            
+            direction = jax.random.randint(key, (), minval=0, maxval=4)
+            new_position = translate(ball.position, direction)
+            new_ball = ball.replace(position=new_position)
+            can_move = _can_spawn_there(state, new_ball)
+            
+            # If we already found a valid move, keep it; otherwise try new position
+            next_pos = jnp.where(found_valid, current_pos, 
+                               jnp.where(can_move, new_position, current_pos))
+            next_valid = jnp.logical_or(found_valid, can_move)
+            
+            return (next_pos, next_valid), next_pos
+        
+        # Split the key for 3 attempts
+        attempt_keys = jax.random.split(key, 3)
+        # Try each movement sequentially
+        (final_pos, _), _ = jax.lax.scan(
+            try_one_direction, 
+            (ball.position, jnp.array(False)), 
+            attempt_keys
+        )
+        return final_pos
 
     if Entities.BALL in state.entities:
         balls: Ball = state.entities[Entities.BALL]  # type: ignore
         keys = jax.random.split(state.key, len(balls.position) + 1)
-        new_position, new_events = jax.jit(jax.vmap(update_one))(balls, keys[1:])
+        new_position = jax.jit(jax.vmap(try_movements))(balls, keys[1:])
         # update balls
         balls = balls.replace(position=new_position)
         state = state.set_balls(balls)
-        # update events
-        # take only the first happened event (even if happened already)
-        idx = jnp.where(new_events.ball_hit.happened, size=1)[0][0]  # scalar
-        ball_hits = jax.tree.map(lambda x: x[idx], new_events.ball_hit)
-        events = state.events.replace(ball_hit=ball_hits)
-        state = state.replace(key=keys[0], events=events)
+        state = state.replace(key=keys[0])
     return state
-
 
 def _can_spawn_there(state: State, ball: Ball) -> Tuple[Array, EventsManager]:
     # according to the grid
     walkable = jnp.equal(state.grid[tuple(ball.position)], 0)
-
     # according to entities
-    events = state.events
     entities = state.entities
     for k in state.entities:
         obstructs = positions_equal(entities[k].position, ball.position)[0]
-        if k == Entities.PLAYER:
-            events = jax.lax.cond(
-                obstructs,
-                lambda x: x.record_ball_hit(ball),
-                lambda x: x,
-                events,
-            )
         walkable = jnp.logical_and(walkable, jnp.any(jnp.logical_not(obstructs)))
-    return jnp.asarray(walkable, dtype=jnp.bool_), events
+    return jnp.asarray(walkable, dtype=jnp.bool_)
 
 
 DEFAULT_TRANSITION = stochastic_transition

@@ -177,7 +177,7 @@ def run_interactive_animation(env, seed=0):
                 elif event.key == pygame.K_UP:
                     action = 2
                 else:
-                    pass
+                    continue
 
                 
                 next_obs = step(obs, action)
